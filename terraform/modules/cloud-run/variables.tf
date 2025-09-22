@@ -11,7 +11,6 @@ variable "traffic" {
     traffic_type_percent = string
   }))
 }
-variable "vpc_connector_name" {}
 variable "service_account" {}
 variable "volumes" {
   type = list(object({

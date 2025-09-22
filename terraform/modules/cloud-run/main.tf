@@ -22,11 +22,7 @@ resource "google_cloud_run_v2_service" "cloud_run_service" {
           instances = volumes.value["cloud_sql_instance"]
         }
       }
-    }
-    vpc_access {
-      connector = var.vpc_connector_name
-      egress    = "ALL_TRAFFIC"
-    }
+    }    
     dynamic "containers" {      
       for_each = var.containers
       content {
