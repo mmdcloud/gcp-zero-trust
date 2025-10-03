@@ -66,7 +66,6 @@ module "vpc" {
 # OAuth Brand and IAP Configuration
 #---------------------------------------------------------------
 
-# Create OAuth brand if it doesn't exist
 resource "google_iap_brand" "project_brand" {
   count = 1
   
@@ -77,7 +76,6 @@ resource "google_iap_brand" "project_brand" {
   depends_on = [google_project_service.apis]
 }
 
-# Create IAP OAuth client
 resource "google_iap_client" "iap_client" {
   display_name = "iap-client"
   brand        = google_iap_brand.project_brand[0].name
@@ -155,7 +153,7 @@ resource "google_compute_global_forwarding_rule" "https_forwarding" {
   project    = var.project_id
   target     = google_compute_target_https_proxy.https_proxy.id
   port_range = "443"
-  ip_address = google_compute_global_address.lb_ip.address
+  ip_address = google_compute_global_address.lb_ip.pu
 }
 
 #---------------------------------------------------------------
