@@ -1,26 +1,27 @@
+#---------------------------------------------------------------
 # Getting project information
+#---------------------------------------------------------------
 data "google_project" "project" {}
 
 #---------------------------------------------------------------
 # Enable Required APIs
 #---------------------------------------------------------------
-
 resource "google_project_service" "apis" {
   for_each = toset([
+    "compute.googleapis.com",
     "run.googleapis.com",
     "iap.googleapis.com",
     "cloudresourcemanager.googleapis.com",
     "iam.googleapis.com"
   ])
   disable_on_destroy = false
-  project = var.project_id
-  service = each.key
+  project            = var.project_id
+  service            = each.key
 }
 
 #---------------------------------------------------------------
 # VPC Configuration
 #---------------------------------------------------------------
-
 module "vpc" {
   source                          = "./modules/vpc"
   vpc_name                        = "vpc"
@@ -40,16 +41,6 @@ module "vpc" {
   ]
   firewall_data = [
     {
-      name          = "vpc-firewall-ssh"
-      source_ranges = ["0.0.0.0/0"]
-      allow_list = [
-        {
-          protocol = "tcp"
-          ports    = ["22"]
-        }
-      ]
-    },
-    {
       name          = "vpc-firewall-http"
       source_ranges = ["0.0.0.0/0"]
       allow_list = [
@@ -65,101 +56,44 @@ module "vpc" {
 #---------------------------------------------------------------
 # OAuth Brand and IAP Configuration
 #---------------------------------------------------------------
+# resource "google_iap_brand" "project_brand" {
+#   support_email     = "support@mohitcloud.xyz"
+#   application_title = "IAP Brand"
+#   project           = var.project_id
+#   depends_on        = [google_project_service.apis]
+# }
 
-resource "google_iap_brand" "project_brand" {
-  count = 1
-  
-  support_email     = "support@mohitcloud.xyz"
-  application_title = "IAP Brand"
-  project           = var.project_id
-  
-  depends_on = [google_project_service.apis]
-}
-
-resource "google_iap_client" "iap_client" {
-  display_name = "iap-client"
-  brand        = google_iap_brand.project_brand[0].name
-}
+# resource "google_iap_client" "iap_client" {
+#   display_name = "iap-client"
+#   brand        = google_iap_brand.project_brand.name
+# }
 
 #---------------------------------------------------------------
 # Artifact Registry
 #---------------------------------------------------------------
-
 module "artifact_registry" {
   source        = "./modules/artifact-registry"
   location      = var.location
   description   = "nodeapp repository"
   repository_id = "nodeapp"
-  shell_command = "bash ${path.cwd}/../src/artifact_push.sh ${data.google_project.project.project_id}"
 }
 
-#---------------------------------------------------------------
-# Load Balancer Configuration
-#---------------------------------------------------------------
-
-# Backend service with IAP enabled
-resource "google_compute_backend_service" "iap_backend_service" {
-  name        = "iap-backend"
-  project     = var.project_id
-  protocol    = "HTTPS"
-  timeout_sec = 30
-  
-  backend {
-    group = google_compute_region_network_endpoint_group.cloudrun_neg.id
+resource "null_resource" "build_and_push_image" {
+  triggers = {
+    always_run = timestamp()
   }
-  
-  # Enable IAP here
-  iap {
-    enabled = true
-    oauth2_client_id     = google_iap_client.iap_client.client_id
-    oauth2_client_secret = google_iap_client.iap_client.secret
+  provisioner "local-exec" {
+    command = "bash ${path.cwd}/../src/frontend/artifact_push.sh ${data.google_project.project.project_id}"
   }
-}
 
-# URL map
-resource "google_compute_url_map" "iap_url_map" {
-  name            = "iap-url-map"
-  project         = var.project_id
-  default_service = google_compute_backend_service.iap_backend_service.id
-}
-
-# SSL certificate for the domain
-resource "google_compute_managed_ssl_certificate" "ssl_cert" {
-  name    = "ssl-cert"
-  project = var.project_id
-  
-  managed {
-    domains = [var.domain_name]
-  }
-}
-
-# HTTPS proxy
-resource "google_compute_target_https_proxy" "https_proxy" {
-  name             = "https-proxy"
-  project          = var.project_id
-  url_map          = google_compute_url_map.iap_url_map.id
-  ssl_certificates = [google_compute_managed_ssl_certificate.ssl_cert.id]
-}
-
-# Global IP address
-resource "google_compute_global_address" "lb_ip" {
-  name    = "lb-ip"
-  project = var.project_id
-}
-
-# Global forwarding rule
-resource "google_compute_global_forwarding_rule" "https_forwarding" {
-  name       = "https-forwarding"
-  project    = var.project_id
-  target     = google_compute_target_https_proxy.https_proxy.id
-  port_range = "443"
-  ip_address = google_compute_global_address.lb_ip.pu
+  depends_on = [
+    module.carshub_frontend_artifact_registry
+  ]
 }
 
 #---------------------------------------------------------------
 # Cloud Run Service
 #---------------------------------------------------------------
-
 module "cloud_run_service_account" {
   source        = "./modules/service-account"
   account_id    = "cloud-run-sa"
@@ -171,22 +105,18 @@ module "cloud_run_service_account" {
   ]
 }
 
-# Network Endpoint Group for Cloud Run
-resource "google_compute_region_network_endpoint_group" "cloudrun_neg" {
-  name                  = "nodeapp-neg"
-  network_endpoint_type = "SERVERLESS"
-  region                = var.location
-  project               = var.project_id
-
-  cloud_run {
-    service = module.cloud_run_service.name
-  }
+module "service_neg" {
+  source       = "./modules/network_endpoint_groups"
+  neg_name     = "service-neg"
+  neg_type     = "SERVERLESS"
+  location     = var.location
+  service_name = module.cloud_run_service.name
 }
 
 module "cloud_run_service" {
   source                           = "./modules/cloud-run"
   deletion_protection              = false
-  ingress                          = "INGRESS_TRAFFIC_INTERNAL_ONLY"
+  ingress                          = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   service_account                  = module.cloud_run_service_account.sa_email
   location                         = var.location
   min_instance_count               = 2
@@ -202,15 +132,15 @@ module "cloud_run_service" {
   ]
   containers = [
     {
-      port = 8080
-      env = []
+      port              = 8080
+      env               = []
       volume_mounts     = []
       cpu_idle          = true
       startup_cpu_boost = true
       image             = "${var.location}-docker.pkg.dev/${data.google_project.project.project_id}/nodeapp/nodeapp:latest"
     }
   ]
-  depends_on = [module.artifact_registry]
+  depends_on = [null_resource.build_and_push_image]
 }
 
 # Cloud Run IAM - Allow invoker access (IAP will handle auth)
@@ -220,14 +150,45 @@ resource "google_cloud_run_service_iam_binding" "invoker" {
   service  = module.cloud_run_service.name
   role     = "roles/run.invoker"
   members = [
-    "allUsers"
+    "serviceAccount:service-${data.google_project.project.number}@gcp-sa-iap.iam.gserviceaccount.com"
   ]
 }
 
+#---------------------------------------------------------------
+# Load Balancer Configuration
+#---------------------------------------------------------------
+module "lb" {
+  source                   = "./modules/lb"
+  project_id               = var.project_id
+  name                     = "lb"
+  load_balancer_type       = "EXTERNAL"
+  region                   = var.location
+  create_proxy_only_subnet = false
+
+  backends = {
+    lb = {
+      is_default          = true
+      protocol            = "HTTP"
+      port_name           = "http"
+      is_serverless_neg   = true
+      manage_health_check = false
+      groups = [
+        { group = module.service_neg.id }
+      ]
+    }
+  }
+  enable_ssl              = false
+  enable_http             = true
+  managed_ssl_certificate = false
+  enable_cloud_armor      = false
+  depends_on              = [module.cloud_run_service]
+}
+
 # IAP access control
-resource "google_iap_web_iam_binding" "iap_access" {
-  project = var.project_id
-  role    = "roles/iap.httpsResourceAccessor"
-  members = var.allowed_iap_members
-  depends_on = [google_compute_backend_service.iap_backend_service]
+resource "google_iap_web_backend_service_iam_binding" "iap_access" {
+  project             = var.project_id
+  role                = "roles/iap.httpsResourceAccessor"
+  members             = var.allowed_iap_members
+  web_backend_service = module.lb.backend_service_self_links["lb"]
+  depends_on          = [module.lb]
 }
