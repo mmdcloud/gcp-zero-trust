@@ -54,21 +54,6 @@ module "vpc" {
 }
 
 #---------------------------------------------------------------
-# OAuth Brand and IAP Configuration
-#---------------------------------------------------------------
-# resource "google_iap_brand" "project_brand" {
-#   support_email     = "support@mohitcloud.xyz"
-#   application_title = "IAP Brand"
-#   project           = var.project_id
-#   depends_on        = [google_project_service.apis]
-# }
-
-# resource "google_iap_client" "iap_client" {
-#   display_name = "iap-client"
-#   brand        = google_iap_brand.project_brand.name
-# }
-
-#---------------------------------------------------------------
 # Artifact Registry
 #---------------------------------------------------------------
 module "artifact_registry" {
@@ -83,11 +68,11 @@ resource "null_resource" "build_and_push_image" {
     always_run = timestamp()
   }
   provisioner "local-exec" {
-    command = "bash ${path.cwd}/../src/frontend/artifact_push.sh ${data.google_project.project.project_id}"
+    command = "bash ${path.cwd}/../src/artifact_push.sh ${data.google_project.project.project_id}"
   }
 
   depends_on = [
-    module.carshub_frontend_artifact_registry
+    module.artifact_registry
   ]
 }
 
@@ -167,10 +152,13 @@ module "lb" {
 
   backends = {
     lb = {
-      is_default          = true
-      protocol            = "HTTP"
-      port_name           = "http"
-      is_serverless_neg   = true
+      is_default        = true
+      protocol          = "HTTP"
+      port_name         = "http"
+      is_serverless_neg = true
+      iap_config = [{
+        enabled = true
+      }]
       manage_health_check = false
       groups = [
         { group = module.service_neg.id }
@@ -189,6 +177,6 @@ resource "google_iap_web_backend_service_iam_binding" "iap_access" {
   project             = var.project_id
   role                = "roles/iap.httpsResourceAccessor"
   members             = var.allowed_iap_members
-  web_backend_service = module.lb.backend_service_self_links["lb"]
+  web_backend_service = module.lb.backend_service_names["lb"] # was backend_service_self_links — must be .name
   depends_on          = [module.lb]
 }

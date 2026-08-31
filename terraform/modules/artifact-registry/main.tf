@@ -4,7 +4,6 @@ resource "google_artifact_registry_repository" "repo" {
   description            = var.description
   format                 = var.artifact_type
   cleanup_policy_dry_run = var.cleanup_policy_dry_run
-  deletion_policy        = var.deletion_policy
   mode                   = var.mode
   kms_key_name           = var.kms_key_name
 
