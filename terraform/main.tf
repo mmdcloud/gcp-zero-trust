@@ -101,7 +101,7 @@ module "service_neg" {
 module "cloud_run_service" {
   source                           = "./modules/cloud-run"
   deletion_protection              = false
-  ingress                          = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  ingress                          = "INGRESS_TRAFFIC_ALL"
   service_account                  = module.cloud_run_service_account.sa_email
   location                         = var.location
   min_instance_count               = 2
@@ -128,15 +128,12 @@ module "cloud_run_service" {
   depends_on = [null_resource.build_and_push_image]
 }
 
-# Cloud Run IAM - Allow invoker access (IAP will handle auth)
-resource "google_cloud_run_service_iam_binding" "invoker" {
+resource "google_cloud_run_service_iam_member" "cloud_run_access" {
   location = var.location
   project  = var.project_id
   service  = module.cloud_run_service.name
   role     = "roles/run.invoker"
-  members = [
-    "serviceAccount:service-${data.google_project.project.number}@gcp-sa-iap.iam.gserviceaccount.com"
-  ]
+  member   = "allUsers"
 }
 
 #---------------------------------------------------------------
@@ -155,10 +152,12 @@ module "lb" {
       is_default        = true
       protocol          = "HTTP"
       port_name         = "http"
-      is_serverless_neg = true
-      iap_config = [{
-        enabled = true
-      }]
+      is_serverless_neg = true      
+      iap_config = [
+        {
+          enabled = true
+        }
+      ]
       manage_health_check = false
       groups = [
         { group = module.service_neg.id }

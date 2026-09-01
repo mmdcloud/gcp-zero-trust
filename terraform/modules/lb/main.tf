@@ -335,7 +335,7 @@ resource "google_compute_backend_service" "serverless" {
   dynamic "backend" {
     for_each = each.value.groups
     content {
-      group                        = backend.value.group
+      group                        = backend.value.group      
       balancing_mode               = backend.value.balancing_mode
       capacity_scaler              = backend.value.capacity_scaler
       max_connections              = backend.value.max_connections

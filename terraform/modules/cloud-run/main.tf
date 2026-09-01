@@ -1,7 +1,5 @@
 data "google_project" "project" {}
-locals {
-  port = 3000
-}
+
 resource "google_cloud_run_v2_service" "cloud_run_service" {
   name                = var.name
   location            = var.location
@@ -32,7 +30,7 @@ resource "google_cloud_run_v2_service" "cloud_run_service" {
           startup_cpu_boost = containers.value["startup_cpu_boost"]
         }
         ports {
-          container_port = local.port
+          container_port = containers.value["port"]
         }
         dynamic "volume_mounts" {
           for_each = containers.value["volume_mounts"]

@@ -21,6 +21,7 @@ variable "volumes" {
 variable "containers" {
   type = list(object({
     image = string
+    port = number
     cpu_idle = bool
     startup_cpu_boost = bool
     env = list(object({
