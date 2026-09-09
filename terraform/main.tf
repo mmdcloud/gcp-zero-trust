@@ -101,7 +101,7 @@ module "service_neg" {
 module "cloud_run_service" {
   source                           = "./modules/cloud-run"
   deletion_protection              = false
-  ingress                          = "INGRESS_TRAFFIC_ALL"
+  ingress                          = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   service_account                  = module.cloud_run_service_account.sa_email
   location                         = var.location
   min_instance_count               = 2
@@ -146,13 +146,13 @@ module "lb" {
   load_balancer_type       = "EXTERNAL"
   region                   = var.location
   create_proxy_only_subnet = false
-
+  create_static_ip         = true
   backends = {
     lb = {
       is_default        = true
       protocol          = "HTTP"
       port_name         = "http"
-      is_serverless_neg = true      
+      is_serverless_neg = true
       iap_config = [
         {
           enabled = true
@@ -164,9 +164,11 @@ module "lb" {
       ]
     }
   }
-  enable_ssl              = false
+  domains                 = ["mohitd.xyz"]
+  enable_ssl              = true
   enable_http             = true
-  managed_ssl_certificate = false
+  managed_ssl_certificate = true
+  https_redirect          = true
   enable_cloud_armor      = false
   depends_on              = [module.cloud_run_service]
 }
@@ -179,3 +181,47 @@ resource "google_iap_web_backend_service_iam_binding" "iap_access" {
   web_backend_service = module.lb.backend_service_names["lb"] # was backend_service_self_links — must be .name
   depends_on          = [module.lb]
 }
+
+# #---------------------------------------------------------------
+# # Access Context Manager
+# #---------------------------------------------------------------
+# # The org-level access policy is typically a singleton per org and
+# # already exists — look it up rather than creating a second one.
+# data "google_access_context_manager_access_policy" "policy" {
+#   # If you don't already have one, create it instead with:
+#   # resource "google_access_context_manager_access_policy" "policy" {
+#   #   parent = "organizations/${var.org_id}"
+#   #   title  = "default-policy"
+#   # }
+#   name = var.access_context_manager_policy_name  # e.g. "accessPolicies/123456789"
+# }
+
+# resource "google_access_context_manager_access_level" "trusted_access" {
+#   parent = data.google_access_context_manager_access_policy.policy.name
+#   name   = "${data.google_access_context_manager_access_policy.policy.name}/accessLevels/trusted_nodeapp_access"
+#   title  = "trusted_nodeapp_access"
+
+#   basic {
+#     conditions {
+#       ip_subnetworks = var.trusted_ip_ranges   # e.g. corporate egress IPs / office CIDRs
+#       # required_access_levels = []            # chain other access levels if needed
+#       # members = []                            # optionally scope to specific identities here too
+#     }
+#   }
+# }
+
+# # IAP access control, now conditioned on the access level
+# resource "google_iap_web_backend_service_iam_binding" "iap_access" {
+#   project             = var.project_id
+#   role                = "roles/iap.httpsResourceAccessor"
+#   members             = var.allowed_iap_members
+#   web_backend_service = module.lb.backend_service_names["lb"]
+
+#   condition {
+#     title       = "require-trusted-access-level"
+#     description = "Only allow IAP access from the trusted access level"
+#     expression  = "\"${google_access_context_manager_access_level.trusted_access.name}\" in request.auth.access_levels"
+#   }
+
+#   depends_on = [module.lb, google_access_context_manager_access_level.trusted_access]
+# }
