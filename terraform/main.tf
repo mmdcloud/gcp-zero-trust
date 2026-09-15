@@ -28,7 +28,6 @@ module "vpc" {
   delete_default_routes_on_create = false
   auto_create_subnetworks         = false
   routing_mode                    = "REGIONAL"
-  region                          = var.location
   subnets = [
     {
       name                     = "subnet"
@@ -58,7 +57,9 @@ module "vpc" {
 #---------------------------------------------------------------
 module "artifact_registry" {
   source        = "./modules/artifact-registry"
+  project_id    = var.project_id
   location      = var.location
+  artifact_type = "DOCKER"
   description   = "nodeapp repository"
   repository_id = "nodeapp"
 }
@@ -100,6 +101,8 @@ module "service_neg" {
 
 module "cloud_run_service" {
   source                           = "./modules/cloud-run"
+  project_id                       = var.project_id
+  type                             = "SERVICE"
   deletion_protection              = false
   ingress                          = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
   service_account                  = module.cloud_run_service_account.sa_email
