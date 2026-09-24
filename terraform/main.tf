@@ -92,11 +92,14 @@ module "cloud_run_service_account" {
 }
 
 module "service_neg" {
-  source       = "./modules/network_endpoint_groups"
-  neg_name     = "service-neg"
-  neg_type     = "SERVERLESS"
-  location     = var.location
-  service_name = module.cloud_run_service.name
+  source   = "./modules/network_endpoint_groups"
+  type     = "REGIONAL"
+  neg_name = "service-neg"
+  neg_type = "SERVERLESS"
+  location = var.location
+  cloud_run = {
+    service = module.cloud_run_service.name
+  }
 }
 
 module "cloud_run_service" {

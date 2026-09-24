@@ -33,6 +33,11 @@ output "subnet_self_links" {
   value       = { for s in google_compute_subnetwork.subnets : s.name => s.self_link }
 }
 
+output "subnets_by_name" {
+  description = "Map of subnet name to subnet resource object, for lookup by name."
+  value       = { for s in google_compute_subnetwork.subnets : s.name => s }
+}
+
 output "subnet_regions" {
   description = "Map of subnet name to region."
   value       = { for s in google_compute_subnetwork.subnets : s.name => s.region }

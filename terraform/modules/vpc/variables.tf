@@ -50,6 +50,12 @@ variable "bgp_inter_region_cost" {
   default     = null
 }
 
+variable "delete_bgp_always_compare_med" {
+  description = "Whether to delete the 'bgp_always_compare_med' setting from the network."
+  type        = bool
+  default     = null
+}
+
 variable "enable_ula_internal_ipv6" {
   description = "Enable ULA internal ipv6 on this network. Enabling this feature will assign a /48 from google defined ULA prefix fd20::/20."
   type        = bool
@@ -98,6 +104,7 @@ variable "subnets" {
     stack_type                        = optional(string)
     send_secondary_ip_range_if_empty  = optional(bool)
     reserved_internal_range           = optional(string)
+    resolve_subnet_mask               = optional(bool)
 
     log_config = optional(object({
       aggregation_interval = optional(string)
