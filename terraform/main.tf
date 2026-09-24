@@ -7,13 +7,8 @@ data "google_project" "project" {}
 # Enable Required APIs
 #---------------------------------------------------------------
 resource "google_project_service" "apis" {
-  for_each = toset([
-    "compute.googleapis.com",
-    "run.googleapis.com",
-    "iap.googleapis.com",
-    "cloudresourcemanager.googleapis.com",
-    "iam.googleapis.com"
-  ])
+  for_each = toset(var.apis_to_enable)
+
   disable_on_destroy = false
   project            = var.project_id
   service            = each.key
@@ -24,32 +19,31 @@ resource "google_project_service" "apis" {
 #---------------------------------------------------------------
 module "vpc" {
   source                          = "./modules/vpc"
-  vpc_name                        = "vpc"
-  delete_default_routes_on_create = false
+  vpc_name                        = var.vpc_name
+  delete_default_routes_on_create = var.delete_default_routes_on_create
   auto_create_subnetworks         = false
   routing_mode                    = "REGIONAL"
+
   subnets = [
     {
-      name                     = "subnet"
+      name                     = var.subnet_name
       region                   = var.location
       purpose                  = "PRIVATE"
       role                     = "ACTIVE"
-      private_ip_google_access = true
-      ip_cidr_range            = "10.1.0.0/24"
+      private_ip_google_access = var.private_ip_google_access
+      ip_cidr_range            = var.subnet_cidr
     }
   ]
+
   firewall_data = [
     {
-      name          = "vpc-firewall-http"
-      source_ranges = ["0.0.0.0/0"]
-      allow_list = [
-        {
-          protocol = "tcp"
-          ports    = ["80"]
-        }
-      ]
+      name          = var.firewall_name
+      source_ranges = var.firewall_source_ranges
+      allow_list    = var.firewall_allowed_ports
     },
   ]
+
+  depends_on = [google_project_service.apis]
 }
 
 #---------------------------------------------------------------
@@ -59,17 +53,20 @@ module "artifact_registry" {
   source        = "./modules/artifact-registry"
   project_id    = var.project_id
   location      = var.location
-  artifact_type = "DOCKER"
-  description   = "nodeapp repository"
-  repository_id = "nodeapp"
+  artifact_type = var.artifact_type
+  description   = var.artifact_repository_description
+  repository_id = var.artifact_repository_id
+
+  depends_on = [google_project_service.apis]
 }
 
 resource "null_resource" "build_and_push_image" {
   triggers = {
     always_run = timestamp()
   }
+
   provisioner "local-exec" {
-    command = "bash ${path.cwd}/../src/artifact_push.sh ${data.google_project.project.project_id}"
+    command = "bash ${path.cwd}/${var.run_image_push_script} ${data.google_project.project.project_id}"
   }
 
   depends_on = [
@@ -82,23 +79,21 @@ resource "null_resource" "build_and_push_image" {
 #---------------------------------------------------------------
 module "cloud_run_service_account" {
   source        = "./modules/service-account"
-  account_id    = "cloud-run-sa"
-  display_name  = "Cloud Run Service Account"
+  account_id    = var.cloud_run_sa_account_id
+  display_name  = var.cloud_run_sa_display_name
   project_id    = data.google_project.project.project_id
   member_prefix = "serviceAccount"
-  permissions = [
-    "roles/artifactregistry.reader"
-  ]
+  permissions   = var.cloud_run_sa_permissions
 }
 
 module "service_neg" {
   source   = "./modules/network_endpoint_groups"
   type     = "REGIONAL"
-  neg_name = "service-neg"
+  neg_name = var.neg_name
   neg_type = "SERVERLESS"
   location = var.location
   cloud_run = {
-    service = module.cloud_run_service.name
+    service = module.cloud_run_service.service_name
   }
 }
 
@@ -106,40 +101,45 @@ module "cloud_run_service" {
   source                           = "./modules/cloud-run"
   project_id                       = var.project_id
   type                             = "SERVICE"
-  deletion_protection              = false
-  ingress                          = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+  deletion_protection              = var.cloud_run_deletion_protection
+  ingress                          = var.cloud_run_ingress
   service_account                  = module.cloud_run_service_account.sa_email
   location                         = var.location
-  min_instance_count               = 2
-  max_instance_count               = 5
-  max_instance_request_concurrency = 80
-  name                             = "nodeapp"
+  min_instance_count               = var.cloud_run_min_instance_count
+  max_instance_count               = var.cloud_run_max_instance_count
+  max_instance_request_concurrency = var.cloud_run_max_instance_request_concurrency
+  name                             = var.cloud_run_service_name
   volumes                          = []
+
   traffic = [
     {
       traffic_type         = "TRAFFIC_TARGET_ALLOCATION_TYPE_LATEST"
       traffic_type_percent = 100
     }
   ]
+
   containers = [
     {
-      port              = 8080
-      env               = []
+      port              = var.cloud_run_container_port
+      env               = var.cloud_run_env
       volume_mounts     = []
-      cpu_idle          = true
-      startup_cpu_boost = true
-      image             = "${var.location}-docker.pkg.dev/${data.google_project.project.project_id}/nodeapp/nodeapp:latest"
+      cpu_idle          = var.cloud_run_cpu_idle
+      startup_cpu_boost = var.cloud_run_startup_cpu_boost
+      image             = "${var.location}-docker.pkg.dev/${data.google_project.project.project_id}/${var.artifact_repository_id}/${var.cloud_run_service_name}:${var.cloud_run_image_tag}"
     }
   ]
+
   depends_on = [null_resource.build_and_push_image]
 }
 
 resource "google_cloud_run_service_iam_member" "cloud_run_access" {
+  for_each = toset(var.cloud_run_invoker_members)
+
   location = var.location
   project  = var.project_id
-  service  = module.cloud_run_service.name
+  service  = module.cloud_run_service.service_name
   role     = "roles/run.invoker"
-  member   = "allUsers"
+  member   = each.key
 }
 
 #---------------------------------------------------------------
@@ -148,35 +148,38 @@ resource "google_cloud_run_service_iam_member" "cloud_run_access" {
 module "lb" {
   source                   = "./modules/lb"
   project_id               = var.project_id
-  name                     = "lb"
-  load_balancer_type       = "EXTERNAL"
+  name                     = var.lb_name
+  load_balancer_type       = var.lb_type
   region                   = var.location
-  create_proxy_only_subnet = false
-  create_static_ip         = true
+  create_proxy_only_subnet = var.create_proxy_only_subnet
+  create_static_ip         = var.create_static_ip
+
   backends = {
     lb = {
       is_default        = true
       protocol          = "HTTP"
-      port_name         = "http"
+      port_name         = var.lb_backend_port_name
       is_serverless_neg = true
       iap_config = [
         {
-          enabled = true
+          enabled = var.iap_enabled
         }
       ]
-      manage_health_check = false
+      manage_health_check = var.lb_manage_health_check
       groups = [
         { group = module.service_neg.id }
       ]
     }
   }
-  domains                 = ["mohitd.xyz"]
-  enable_ssl              = true
-  enable_http             = true
-  managed_ssl_certificate = true
-  https_redirect          = true
-  enable_cloud_armor      = false
-  depends_on              = [module.cloud_run_service]
+
+  domains                 = var.domains
+  enable_ssl              = var.enable_ssl
+  enable_http             = var.enable_http
+  managed_ssl_certificate = var.managed_ssl_certificate
+  https_redirect          = var.https_redirect
+  enable_cloud_armor      = var.enable_cloud_armor
+
+  depends_on = [module.cloud_run_service]
 }
 
 # IAP access control
@@ -206,7 +209,7 @@ resource "google_iap_web_backend_service_iam_binding" "iap_access" {
 #   parent = data.google_access_context_manager_access_policy.policy.name
 #   name   = "${data.google_access_context_manager_access_policy.policy.name}/accessLevels/trusted_nodeapp_access"
 #   title  = "trusted_nodeapp_access"
-
+#
 #   basic {
 #     conditions {
 #       ip_subnetworks = var.trusted_ip_ranges   # e.g. corporate egress IPs / office CIDRs
@@ -215,19 +218,19 @@ resource "google_iap_web_backend_service_iam_binding" "iap_access" {
 #     }
 #   }
 # }
-
+#
 # # IAP access control, now conditioned on the access level
 # resource "google_iap_web_backend_service_iam_binding" "iap_access" {
 #   project             = var.project_id
 #   role                = "roles/iap.httpsResourceAccessor"
 #   members             = var.allowed_iap_members
 #   web_backend_service = module.lb.backend_service_names["lb"]
-
+#
 #   condition {
 #     title       = "require-trusted-access-level"
 #     description = "Only allow IAP access from the trusted access level"
 #     expression  = "\"${google_access_context_manager_access_level.trusted_access.name}\" in request.auth.access_levels"
 #   }
-
+#
 #   depends_on = [module.lb, google_access_context_manager_access_level.trusted_access]
 # }
