@@ -186,7 +186,7 @@ resource "google_iap_web_backend_service_iam_binding" "iap_access" {
   project             = var.project_id
   role                = "roles/iap.httpsResourceAccessor"
   members             = var.allowed_iap_members
-  web_backend_service = module.lb.backend_service_names["lb"] # was backend_service_self_links — must be .name
+  web_backend_service = module.lb.backend_service_names["lb"]
   depends_on          = [module.lb]
 }
 

@@ -1,5 +1,4 @@
 #!/bin/bash
-mkdir code
 cp -r ../src/* code/
 cd code
 
