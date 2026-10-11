@@ -18,7 +18,7 @@ resource "google_project_service" "apis" {
 # VPC Configuration
 #---------------------------------------------------------------
 module "vpc" {
-  source                          = "./modules/vpc"
+  source                          = "git::https://github.com/mmdcloud/terraform-gcp-modules.git//vpc?ref=main"
   vpc_name                        = var.vpc_name
   delete_default_routes_on_create = var.delete_default_routes_on_create
   auto_create_subnetworks         = false
@@ -50,7 +50,7 @@ module "vpc" {
 # Artifact Registry
 #---------------------------------------------------------------
 module "artifact_registry" {
-  source        = "./modules/artifact-registry"
+  source        = "git::https://github.com/mmdcloud/terraform-gcp-modules.git//artifact-registry?ref=main"
   project_id    = var.project_id
   location      = var.location
   artifact_type = var.artifact_type
@@ -87,17 +87,17 @@ module "cloud_run_service_account" {
 }
 
 module "service_neg" {
-  source   = "./modules/network_endpoint_groups/serverless_neg"
+  source     = "git::https://github.com/mmdcloud/terraform-gcp-modules.git//network_endpoint_groups/serverless_neg?ref=main"
   project_id = var.project_id
-  neg_name = var.neg_name
-  region = var.location
+  neg_name   = var.neg_name
+  region     = var.location
   cloud_run = {
     service = module.cloud_run_service.service_name
   }
 }
 
 module "cloud_run_service" {
-  source                           = "./modules/cloud-run"
+  source                           = "git::https://github.com/mmdcloud/terraform-gcp-modules.git//cloud-run?ref=main"
   project_id                       = var.project_id
   type                             = "SERVICE"
   deletion_protection              = var.cloud_run_deletion_protection
@@ -131,12 +131,11 @@ module "cloud_run_service" {
   depends_on = [null_resource.build_and_push_image]
 }
 
-resource "google_cloud_run_service_iam_member" "cloud_run_access" {
+resource "google_cloud_run_v2_service_iam_member" "cloud_run_access" {
   for_each = toset(var.cloud_run_invoker_members)
-
+  name     = module.cloud_run_service.service_name
   location = var.location
   project  = var.project_id
-  service  = module.cloud_run_service.service_name
   role     = "roles/run.invoker"
   member   = each.key
 }
@@ -145,7 +144,7 @@ resource "google_cloud_run_service_iam_member" "cloud_run_access" {
 # Load Balancer Configuration
 #---------------------------------------------------------------
 module "lb" {
-  source                   = "./modules/lb"
+  source                   = "git::https://github.com/mmdcloud/terraform-gcp-modules.git//load-balancer?ref=main"
   project_id               = var.project_id
   name                     = var.lb_name
   load_balancer_type       = var.lb_type
@@ -182,10 +181,11 @@ module "lb" {
 }
 
 # IAP access control
-resource "google_iap_web_backend_service_iam_binding" "iap_access" {
+resource "google_iap_web_backend_service_iam_member" "iap_access" {
+  for_each            = toset(var.allowed_iap_members)
   project             = var.project_id
   role                = "roles/iap.httpsResourceAccessor"
-  members             = var.allowed_iap_members
+  member              = each.key
   web_backend_service = module.lb.backend_service_names["lb"]
   depends_on          = [module.lb]
 }
